@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from dotenv import load_dotenv
-from openai import OpenAI, OpenAIError
+from openai import OpenAI, OpenAIError, RateLimitError
 
 load_dotenv(Path(__file__).resolve().with_name(".env"))
 
@@ -266,6 +266,104 @@ class OpenAIGenerator:
         return answer
 
 
+class GeminiGenerator:
+    """Call Google's OpenAI-compatible endpoint using the existing SDK."""
+
+    def __init__(self, max_output_tokens: int = 4096) -> None:
+        api_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+        if not api_key or api_key == "your_gemini_api_key_here":
+            raise RuntimeError("GEMINI_API_KEY is missing from .env")
+        self.model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+        if not self.model:
+            raise RuntimeError("GEMINI_MODEL is missing from .env")
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            timeout=90.0,
+        )
+        self.max_output_tokens = max_output_tokens
+        self._last_request_at = 0.0
+
+    def generate(self, prompt: str) -> str:
+        # Free-tier projects may allow only five requests per minute.
+        for attempt in range(4):
+            delay = 13.0 - (time.monotonic() - self._last_request_at)
+            if delay > 0:
+                time.sleep(delay)
+            self._last_request_at = time.monotonic()
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    max_tokens=self.max_output_tokens,
+                )
+                break
+            except RateLimitError as exc:
+                # A daily quota will not recover during a short retry loop.
+                if "PerDay" in str(exc) or attempt == 3:
+                    raise
+                time.sleep(20.0)
+        if not response.choices:
+            raise RuntimeError("Gemini returned no answer choices")
+        choice = response.choices[0]
+        if choice.finish_reason == "length":
+            raise RuntimeError("Gemini answer was truncated by the token limit")
+        answer = (choice.message.content or "").strip()
+        if not answer:
+            raise RuntimeError("Gemini returned an empty answer")
+        return answer
+
+
+class CompatibleGenerator:
+    """Use an explicitly configured OpenAI-compatible service such as ViLao."""
+
+    def __init__(self, max_output_tokens: int = 4096) -> None:
+        config = {key: os.getenv(key, "").strip() for key in (
+            "AI_API_KEY", "AI_BASE_URL", "AI_MODEL"
+        )}
+        for key, value in config.items():
+            if not value:
+                raise RuntimeError(f"{key} is missing from .env")
+        self.model = config["AI_MODEL"]
+        self.client = OpenAI(
+            api_key=config["AI_API_KEY"], base_url=config["AI_BASE_URL"], timeout=90.0
+        )
+        self.max_output_tokens = max_output_tokens
+
+    def generate(self, prompt: str) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=self.max_output_tokens,
+        )
+        if not response.choices:
+            raise RuntimeError("Configured API returned no answer choices")
+        choice = response.choices[0]
+        if choice.finish_reason == "length":
+            raise RuntimeError("Configured API answer was truncated by the token limit")
+        answer = (choice.message.content or "").strip()
+        if not answer:
+            raise RuntimeError("Configured API returned an empty answer")
+        return answer
+
+
+def _configured_generator() -> TextGenerator:
+    # Explicit AI_* configuration takes precedence over legacy LLM_PROVIDER.
+    ai_provider = os.getenv("AI_PROVIDER", "").strip().lower()
+    if ai_provider:
+        if ai_provider not in {"openai", "openai-compatible", "vilao"}:
+            raise ValueError("AI_PROVIDER must be openai, openai-compatible or vilao")
+        return CompatibleGenerator()
+    provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+    if provider == "gemini":
+        return GeminiGenerator()
+    if provider == "openai":
+        return OpenAIGenerator()
+    raise ValueError("LLM_PROVIDER must be gemini or openai")
+
+
 @dataclass(frozen=True)
 class DomainResponse:
     question: str
@@ -299,7 +397,7 @@ class DomainAssistant:
         return cls(
             corpus_id,
             BM25Retriever(chunks),
-            generator if generator is not None else OpenAIGenerator(),
+            generator if generator is not None else _configured_generator(),
             top_k,
         )
 
