@@ -143,8 +143,7 @@ Kiểm tra:
 pytest tests/ -v
 ```
 
-`rerank_by_overlap()` là TODO bonus của Exercise 3.5. Test tương ứng được skip
-nếu bạn chưa làm bonus.
+`rerank_by_overlap()` được triển khai ở Exercise 3.5; test bonus chạy cùng suite.
 
 ---
 
@@ -330,19 +329,23 @@ verbosity bias và self-preference bằng cách nào?
 Chỉ làm sau khi hoàn thành 3.1–3.3. Chọn hai framework trong RAGAS, DeepEval
 và TruLens; chạy hoặc thiết kế một so sánh có cùng input dataset.
 
-| Tiêu chí | Framework 1: ____ | Framework 2: ____ |
+| Tiêu chí | Framework 1: RAGAS | Framework 2: DeepEval |
 |---|---|---|
-| Setup complexity | | |
-| Metrics available | | |
-| CI/CD integration | | |
-| Kết quả trên cùng dataset | | |
-| Insight rút ra | | |
+| Setup complexity | Cần map golden records sang evaluation dataset và cấu hình LLM judge/provider; các API metric thay đổi theo phiên bản. | Dùng `LLMTestCase`, map input/actual_output/expected_output/retrieval_context và cấu hình metric/judge. |
+| Metrics available | Context Precision, Context Recall, Faithfulness, Response Relevancy và nhiều metric khác. | Contextual Precision/Recall/Relevancy, Faithfulness, Answer Relevancy cùng các test safety. |
+| CI/CD integration | Có thể chạy evaluation từ job CI và lưu kết quả; cần pin version/model/prompt để so sánh ổn định. | Có thể chạy metric trong pytest/CI; cần pin version/model và lưu score/reason. |
+| Kết quả trên cùng dataset | Chưa chạy framework; protocol thiết kế dùng cùng 20 questions, actual answers, expected answers và retrieved chunks. Không có score được đo. | Chưa chạy framework; cùng protocol/input như RAGAS. Không có score được đo. |
+| Insight rút ra | Phù hợp kiểm tra claim support và retrieval theo metric RAG; cần đối chiếu định nghĩa cụ thể với heuristic của Lab. | Tổ chức test case/metric theo test workflow; có thể xem reason của judge. Cần cùng judge/model để giảm biến số khi so sánh. |
 
-- Scores có nhất quán không?
-- Framework nào strict hơn và vì sao?
-- Hai framework có tìm ra cùng failure cases không?
+**Protocol so sánh trên cùng input:** pin phiên bản package và cùng model judge/temperature; map mỗi golden QA thành question/input, saved actual answer, expected/reference answer, gold contexts và retrieved chunks theo đúng thứ tự. Chạy các metric tương đương của hai framework trên đủ 20 records, lưu score, reason, latency/cost và lỗi từng case. Tách metric ở phía answer với metric retrieval; không dùng lại gold answer trong generation. So điểm theo từng ID, thứ hạng cases thấp, pairwise disagreement với human labels và độ lặp qua hai runs. Vì dependencies/provider setup chưa được cài và gọi trong bài hiện tại, đây là comparison design, không phải kết quả thực nghiệm.
 
-> *Phân tích:*
+- **Scores có nhất quán không?** Chưa đo; cần chạy protocol trên để kết luận. Định nghĩa metric/prompt có thể khác nhau nên không giả định score bằng nhau.
+- **Framework nào strict hơn?** Chưa xác định bằng dữ liệu. So calibration với human labels, false positives/negatives và strictness trên cùng cases thay vì suy từ tên framework.
+- **Có tìm cùng failure cases không?** Chưa đo; so top failures theo ID và confusion matrix sau khi cả hai chạy cùng inputs.
+
+RAGAS Context Precision/Recall có cách tính dựa trên relevance/claim support; DeepEval Contextual Precision đánh giá relevance theo từng retrieved node và thứ hạng. Các công thức gần nhau nhưng judge prompts và cách tạo verdict có thể tạo khác biệt; so sánh phải giữ model và input cố định, đồng thời đọc reason/evidence. Tài liệu tham khảo: [RAGAS Context Precision](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/context_precision/), [RAGAS Context Recall](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/context_recall/), [DeepEval Contextual Precision](https://deepeval.com/docs/metrics-contextual-precision), [DeepEval Faithfulness](https://deepeval.com/docs/metrics-faithfulness).
+
+> Kết quả bonus ở đây là thiết kế protocol, chưa có score framework nào được chạy. Không kết luận framework nào strict hơn. Cùng 20 QA và cùng actual answers là điều kiện so sánh; khác judge, prompt, metric definition hoặc reference mapping sẽ tạo confound. Sau khi chạy cần xem disagreement theo ID và kiểm tra thủ công các adversarial/policy cases.
 
 ### Exercise 3.5 — Retrieval Reranking (Bonus +5)
 
@@ -357,20 +360,27 @@ thay đổi Context Recall hay không.
 
 | ID | Recall before | Recall after | Precision before | Precision after | Delta Precision |
 |---|---:|---:|---:|---:|---:|
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| **Avg** | | | | | |
+| E01 | 1.000 | 1.000 | 1.000 | 1.000 | +0.000 |
+| M01 | 0.882 | 0.882 | 1.000 | 1.000 | +0.000 |
+| M03 | 0.500 | 0.500 | 1.000 | 1.000 | +0.000 |
+| M06 | 0.862 | 0.862 | 1.000 | 1.000 | +0.000 |
+| M07 | 0.717 | 0.717 | 0.917 | 1.000 | +0.083 |
+| H02 | 0.683 | 0.683 | 1.000 | 1.000 | +0.000 |
+| H04 | 0.792 | 0.792 | 1.000 | 1.000 | +0.000 |
+| H05 | 0.441 | 0.441 | 1.000 | 1.000 | +0.000 |
+| A01 | 0.368 | 0.368 | 0.917 | 1.000 | +0.083 |
+| A02 | 0.727 | 0.727 | 0.700 | 1.000 | +0.300 |
+| **Avg** | **0.697** | **0.697** | **0.953** | **1.000** | **+0.047** |
+
+Phương pháp: chọn 10 cases điểm thấp/đại diện; giữ nguyên đúng 5 retrieved chunks của mỗi case. Gọi `rerank_by_overlap(chunks, expected_answer)` rồi tính lại metrics bằng `RAGASEvaluator`. Average Precision dùng expected answer làm query của reranker và reference cho metric. Các con số là đo trên artifacts đã lưu, không gọi model sinh answer mới.
 
 **Tại sao Recall dự kiến không đổi?**
 
-> *Câu trả lời:*
+> Recall đo hợp các từ trong toàn bộ chunks; rerank chỉ hoán vị cùng danh sách nên hợp từ không đổi. Bảng xác nhận Recall trước/sau giống nhau cho cả 10 cases. Nếu reranker thêm hoặc bỏ chunk thì điều kiện thí nghiệm bị phá vỡ.
 
 **Khi nào reranking không đủ và cần sửa retriever/query/chunking?**
 
-> *Câu trả lời:*
+> Reranking chỉ đổi thứ tự chunks đã truy xuất. Nếu evidence cần thiết vắng khỏi top-k, như H05 thiếu OT-06-P03/P05 và OT-07-P04, hay M03 thiếu OT-07-P02, reranker không thể khôi phục tài liệu không có trong candidate set. Khi đó cần sửa query expansion/retriever/chunking hoặc tăng candidate pool rồi đo lại Recall. Mức tăng Precision trung bình +0.047 chủ yếu do A02 (+0.300), M07 (+0.083), A01 (+0.083); bảy case còn lại không đổi vì overlap reranker giữ thứ tự liên quan sẵn có/ties. Kết quả này chưa chứng minh answer quality tốt hơn; cần kiểm tra trace và completeness.
 
 ---
 
@@ -391,4 +401,4 @@ Hoàn thành kiểm tra cuối trong khoảng 11:50–12:00.
 - [ ] Exercise 3.3 có rubric 1–5 và bias controls.
 - [ ] `reflection.md` có ba failure analyses và regression strategy.
 - [ ] Đã copy `template.py` thành `solution/solution.py`.
-- [ ] Exercise 3.4 và 3.5 chỉ làm nếu chọn bonus.
+- [x] Exercise 3.4 protocol comparison và Exercise 3.5 reranking đã hoàn thành.
